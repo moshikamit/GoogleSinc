@@ -6,13 +6,15 @@ the tray menu offers sync now / pause / quit. Sync runs in the Qt thread
 Conflicts tab where the user decides which copy stays.
 """
 
+import fcntl
 import logging
 import os
+import signal
 import sys
 from datetime import datetime
 from typing import Optional
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -292,6 +294,7 @@ class TrayApp(QObject):
         menu.addAction(sync_action)
         menu.addSeparator()
         menu.addAction(quit_action)
+        self._menu = menu
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(self._tray_activated)
         self.tray.setToolTip("GoogleSinc - idle")
@@ -393,7 +396,16 @@ class TrayApp(QObject):
 
     def _tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.Trigger:
+            # Left-click: open the main window.
             self.show_window()
+        elif reason == QSystemTrayIcon.Context:
+            # Right-click on Cinnamon/AppIndicator: show the menu ourselves.
+            self.show_menu()
+
+    def show_menu(self) -> None:
+        from PySide6.QtGui import QCursor
+
+        self._menu.popup(QCursor.pos())
 
     def show_window(self) -> None:
         self.window.refresh_conflicts()
@@ -407,15 +419,69 @@ class TrayApp(QObject):
         QApplication.quit()
 
 
+LOCK_PATH = os.path.join(
+    os.path.expanduser("~"), ".config", "googlesinc", "googlesinc.lock"
+)
+
+
+def _acquire_single_instance_lock() -> Optional[int]:
+    """Hold an exclusive lock so only one tray instance can run at a time.
+
+    Returns the lock file descriptor, or None if another instance holds it.
+    """
+    os.makedirs(os.path.dirname(LOCK_PATH), exist_ok=True)
+    fd = os.open(LOCK_PATH, os.O_RDWR | os.O_CREAT)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    os.ftruncate(fd, 0)
+    os.write(fd, str(os.getpid()).encode("ascii"))
+    return fd
+
+
 def main() -> int:
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  # tray app keeps running
     if not QSystemTrayIcon.isSystemTrayAvailable():
         print("System tray is not available on this desktop.", file=sys.stderr)
         return 1
+
+    lock_fd = _acquire_single_instance_lock()
+    if lock_fd is None:
+        print(
+            "GoogleSinc is already running. Only one instance is allowed.\n"
+            "Use the existing tray icon, or stop it with: pkill -f googlesinc.py",
+            file=sys.stderr,
+        )
+        return 2
+
     tray_app = TrayApp()
+
+    # Install the Ctrl+C (SIGINT) handler BEFORE starting any background
+    # threads. Threads started earlier (the watchdog/inotify observer and the
+    # polling loop) can mask SIGINT process-wide. Registering first, plus a
+    # periodic timer that wakes the interpreter, lets Ctrl+C stop the app.
+    # The handler calls quit() directly instead of raising, because a
+    # KeyboardInterrupt raised inside a Qt timer callback is swallowed by the
+    # event loop instead of unwinding app.exec().
+    def _handle_sigint(_signum, _frame):
+        print("\nCtrl+C received - shutting down GoogleSinc...", flush=True)
+        tray_app.quit()
+
+    signal.signal(signal.SIGINT, _handle_sigint)
+    signal_timer = QTimer()
+    signal_timer.start(200)
+    signal_timer.timeout.connect(lambda: None)
+
     tray_app.start()
-    return app.exec()
+
+    try:
+        return app.exec()
+    except KeyboardInterrupt:
+        tray_app.quit()
+        return 0
 
 
 if __name__ == "__main__":
