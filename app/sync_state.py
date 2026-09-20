@@ -102,6 +102,14 @@ class SyncStateDB:
             rows = conn.execute("SELECT * FROM files ORDER BY path").fetchall()
         return [dict(row) for row in rows]
 
+    def list_by_status(self, status: str) -> List[Dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM files WHERE sync_status = ? ORDER BY path",
+                (status,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def remove_file(self, path: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM files WHERE path = ?", (path,))

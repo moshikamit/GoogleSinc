@@ -214,3 +214,111 @@ class SyncEngine:
             self.state_db.remove_file(path)
 
         return plan
+
+    # --- Conflict handling ---------------------------------------------
+    # Policy: conflicts are NEVER resolved automatically. The conflicting
+    # files are left exactly as they are on both sides; the record is
+    # flagged 'conflict' so the user can inspect and decide explicitly.
+
+    def list_conflicts(self) -> List[Dict]:
+        """Return all files currently flagged as conflicting."""
+        return self.state_db.list_by_status("conflict")
+
+    def describe_conflict(self, path: str) -> Dict:
+        """Gather local and remote facts for one conflicting file."""
+        if not self.drive_folder:
+            self.ensure_drive_folder()
+
+        record = self.state_db.get_file(path)
+        local_path = os.path.join(self.local_root, path)
+        local_info = None
+        if os.path.exists(local_path):
+            stat = os.stat(local_path)
+            local_info = {
+                "exists": True,
+                "size": stat.st_size,
+                "modified_at": stat.st_mtime,
+                "md5": compute_md5(local_path),
+            }
+        else:
+            local_info = {"exists": False}
+
+        remote_info = None
+        for item in self.drive_service.list_files_in_folder(self.drive_folder["id"]):
+            if item["name"] == path:
+                remote_info = {
+                    "exists": True,
+                    "id": item["id"],
+                    "size": item.get("size"),
+                    "modified_at": item.get("modifiedTime"),
+                    "md5": item.get("md5Checksum"),
+                }
+                break
+        if remote_info is None:
+            remote_info = {"exists": False}
+
+        return {"path": path, "record": record, "local": local_info, "remote": remote_info}
+
+    def resolve_conflict(self, path: str, keep: str) -> None:
+        """Apply the user's decision for one conflicting file.
+
+        keep='local'  uploads the local copy over the Drive copy.
+        keep='remote' downloads the Drive copy over the local copy.
+        Raises ValueError for an unknown choice or a non-conflicted file.
+        """
+        if keep not in ("local", "remote"):
+            raise ValueError("keep must be 'local' or 'remote'")
+
+        record = self.state_db.get_file(path)
+        if record is None:
+            raise ValueError(f"No tracked file at path: {path}")
+        if record.get("sync_status") != "conflict":
+            raise ValueError(f"File is not in conflict: {path}")
+
+        if not self.drive_folder:
+            self.ensure_drive_folder()
+
+        remote_item = None
+        for item in self.drive_service.list_files_in_folder(self.drive_folder["id"]):
+            if item["name"] == path:
+                remote_item = item
+                break
+
+        if keep == "local":
+            local_path = os.path.join(self.local_root, path)
+            if not os.path.exists(local_path):
+                raise FileNotFoundError(f"Local file missing, cannot keep local: {path}")
+            stat = os.stat(local_path)
+            uploaded = self.drive_service.upload_local_file(
+                local_path=local_path,
+                remote_name=path,
+                parent_id=self.drive_folder["id"],
+                file_id=remote_item["id"] if remote_item else None,
+            )
+            self.state_db.upsert_file(
+                path=path,
+                remote_id=uploaded.get("id"),
+                size=stat.st_size,
+                local_md5=compute_md5(local_path),
+                remote_md5=uploaded.get("md5Checksum"),
+                local_modified_at=stat.st_mtime,
+                remote_modified_at=uploaded.get("modifiedTime"),
+                sync_status="synced",
+            )
+        else:
+            if remote_item is None:
+                raise FileNotFoundError(f"Remote file missing, cannot keep remote: {path}")
+            local_path = os.path.join(self.local_root, path)
+            os.makedirs(os.path.dirname(local_path) or self.local_root, exist_ok=True)
+            self.drive_service.download_file(remote_item["id"], local_path)
+            stat = os.stat(local_path)
+            self.state_db.upsert_file(
+                path=path,
+                remote_id=remote_item["id"],
+                size=stat.st_size,
+                local_md5=compute_md5(local_path),
+                remote_md5=remote_item.get("md5Checksum"),
+                local_modified_at=stat.st_mtime,
+                remote_modified_at=remote_item.get("modifiedTime"),
+                sync_status="synced",
+            )

@@ -127,12 +127,12 @@ This document tracks the implementation of the Linux Google Drive sync app. Use 
 - [ ] Add retries for transient failures
 
 ### 5.3 Conflict resolution
-- [ ] Define conflict policy for both-side changes
-- [ ] Implement local-wins rule
-- [ ] Implement remote-wins rule
-- [ ] Implement conflict-copy naming strategy
-- [ ] Log conflict results clearly
-- [ ] Validate conflict behavior with test cases
+- [x] Define conflict policy for both-side changes (user decides; never auto-resolve)
+- [x] Implement local-wins rule (on explicit user choice)
+- [x] Implement remote-wins rule (on explicit user choice)
+- [ ] Implement conflict-copy naming strategy (not needed under user-decides policy)
+- [x] Log conflict results clearly
+- [x] Validate conflict behavior with test cases
 
 ---
 
@@ -185,7 +185,7 @@ This document tracks the implementation of the Linux Google Drive sync app. Use 
 
 ### 8.1 Unit tests
 - [x] Test file comparison logic
-- [ ] Test conflict handling logic
+- [x] Test conflict handling logic
 - [x] Test metadata storage logic
 - [ ] Test path normalization
 - [ ] Test sync queue logic
