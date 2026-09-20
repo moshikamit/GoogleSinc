@@ -36,3 +36,21 @@ def scan_folder(local_root: str) -> Dict[str, Dict]:
                 "md5": compute_md5(full_path),
             }
     return results
+
+
+def delete_local_file(local_root: str, relative_path: str) -> str:
+    """Delete one file inside the synced folder and prune empty parent dirs.
+
+    Returns the absolute path that was removed.
+    """
+    full_path = os.path.join(local_root, relative_path)
+    os.remove(full_path)
+
+    parent = os.path.dirname(full_path)
+    while parent and os.path.abspath(parent) != os.path.abspath(local_root):
+        if os.listdir(parent):
+            break
+        os.rmdir(parent)
+        parent = os.path.dirname(parent)
+
+    return full_path

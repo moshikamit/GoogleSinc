@@ -3,7 +3,7 @@ from typing import Dict, List, Optional
 
 from app.comparator import SyncPlan, build_sync_plan
 from app.drive_service import GoogleDriveService
-from app.local_scanner import compute_md5, scan_folder
+from app.local_scanner import compute_md5, delete_local_file, scan_folder
 from app.sync_state import SyncStateDB
 
 
@@ -69,7 +69,7 @@ class SyncEngine:
             downloaded.append(relative_name)
         return downloaded
 
-    def build_plan(self) -> SyncPlan:
+    def build_plan(self, execute_deletes: bool = False) -> SyncPlan:
         """Scan both sides and compare them against stored sync metadata."""
         if not self.drive_folder:
             self.ensure_drive_folder()
@@ -77,21 +77,76 @@ class SyncEngine:
         local_scan = scan_folder(self.local_root)
         remote_files = self.drive_service.list_files_in_folder(self.drive_folder["id"])
         stored_state = self.state_db.list_files()
-        return build_sync_plan(local_scan, remote_files, stored_state)
+        return build_sync_plan(local_scan, remote_files, stored_state, execute_deletes)
 
-    def sync(self) -> SyncPlan:
+    def sync(self, execute_deletes: bool = False) -> SyncPlan:
         """Run one metadata-driven sync pass.
 
         Uploads new or locally changed files, downloads new or remotely
         changed files, skips unchanged files, and records the resulting
-        state in SQLite. Conflicts and deletions are reported but never
-        executed automatically.
+        state in SQLite. Conflicts are reported but never executed.
+
+        When execute_deletes is True, mirror deletion is active: a file
+        deleted locally is deleted from Drive and vice versa, then its
+        metadata record is removed. When False, deletions are only
+        reported in the plan and marked pending_delete in the database.
         """
-        plan = self.build_plan()
-        remote_by_name = {
-            item["name"]: item
-            for item in self.drive_service.list_files_in_folder(self.drive_folder["id"])
-        }
+        plan = self.build_plan(execute_deletes=execute_deletes)
+        remote_items = self.drive_service.list_files_in_folder(self.drive_folder["id"])
+        stored_by_path = {row["path"]: row for row in self.state_db.list_files()}
+
+        # Map each remote file name to its tracked item when possible, so
+        # duplicate Drive files with the same name don't hide the tracked one.
+        remote_by_name: Dict[str, Dict] = {}
+        for item in remote_items:
+            stored = stored_by_path.get(item["name"])
+            existing = remote_by_name.get(item["name"])
+            if existing is None:
+                remote_by_name[item["name"]] = item
+            elif stored and stored.get("remote_id") == item["id"]:
+                remote_by_name[item["name"]] = item
+
+        stale_remote_ids = [
+            item["id"]
+            for item in remote_items
+            if (stored := stored_by_path.get(item["name"])) is not None
+            and stored.get("remote_id")
+            and item["id"] != stored["remote_id"]
+        ]
+
+        # Same-name Drive files that are not tracked in metadata are leftover
+        # duplicates (e.g. from older pre-metadata uploads). Clean them up
+        # instead of treating them as new remote content.
+        untracked_duplicate_ids = [
+            item["id"]
+            for item in remote_items
+            if item["name"] in stored_by_path
+            and remote_by_name.get(item["name"], {}).get("id") != item["id"]
+            and item["id"] not in stale_remote_ids
+        ]
+        if execute_deletes:
+            for file_id in untracked_duplicate_ids:
+                self.drive_service.delete_file(file_id)
+
+        # A mirrored delete must not be undone by a leftover Drive file that
+        # shares the name but has a different file id. Remove such stale
+        # duplicates and convert the phantom download into a real deletion.
+        if execute_deletes:
+            delete_candidates = set(plan.local_deletions) | set(plan.downloads)
+            for path in sorted(delete_candidates):
+                stored = stored_by_path.get(path)
+                if not stored or not stored.get("remote_id"):
+                    continue
+                same_name = [i for i in remote_items if i["name"] == path]
+                if any(i["id"] == stored["remote_id"] for i in same_name):
+                    continue  # tracked file still exists: not a mirrored delete
+                for item in same_name:
+                    self.drive_service.delete_file(item["id"])
+                    stale_remote_ids.append(item["id"])
+                if path in plan.downloads:
+                    plan.downloads.remove(path)
+                if path not in plan.local_deletions:
+                    plan.local_deletions.append(path)
 
         for path in plan.uploads:
             local_path = os.path.join(self.local_root, path)
@@ -136,11 +191,24 @@ class SyncEngine:
         for path in plan.conflicts:
             self.state_db.set_status(path, "conflict")
 
-        for path in plan.local_deletions:
-            self.state_db.set_status(path, "pending_delete")
+        if execute_deletes:
+            # Mirror deletion: file removed locally -> delete from Drive.
+            for path in plan.local_deletions:
+                for item in remote_items:
+                    if item["name"] == path and item["id"] not in stale_remote_ids:
+                        self.drive_service.delete_file(item["id"])
+                self.state_db.remove_file(path)
 
-        for path in plan.remote_deletions:
-            self.state_db.set_status(path, "pending_delete")
+            # File removed on Drive -> delete the local copy.
+            for path in plan.remote_deletions:
+                delete_local_file(self.local_root, path)
+                self.state_db.remove_file(path)
+        else:
+            for path in plan.local_deletions:
+                self.state_db.set_status(path, "pending_delete")
+
+            for path in plan.remote_deletions:
+                self.state_db.set_status(path, "pending_delete")
 
         for path in plan.stale_records:
             self.state_db.remove_file(path)

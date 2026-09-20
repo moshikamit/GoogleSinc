@@ -122,7 +122,7 @@ This document tracks the implementation of the Linux Google Drive sync app. Use 
 ### 5.2 Upload and download actions
 - [x] Implement upload of new or changed local files
 - [x] Implement download of new or changed remote files
-- [ ] Implement delete propagation rules
+- [x] Implement delete propagation rules
 - [ ] Handle large file transfer reliability
 - [ ] Add retries for transient failures
 
@@ -193,7 +193,7 @@ This document tracks the implementation of the Linux Google Drive sync app. Use 
 ### 8.2 Integration tests
 - [x] Test upload path end to end
 - [x] Test download path end to end
-- [ ] Test delete propagation
+- [x] Test delete propagation
 - [ ] Test file change event handling
 - [ ] Test app startup and restoration
 

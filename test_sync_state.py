@@ -137,6 +137,17 @@ def test_comparator() -> None:
     plan = build_sync_plan({}, [], [_stored("old.txt")])
     assert plan.stale_records == ["old.txt"], plan.summary()
 
+    # 10. Synced file missing on Drive, local untouched -> remote deletion
+    plan = build_sync_plan({"a.txt": _local("same")}, [], [_stored("a.txt")])
+    assert plan.remote_deletions == ["a.txt"], plan.summary()
+    assert not plan.uploads, "must not resurrect a file deleted on Drive"
+
+    # 11. Synced file missing on Drive AND local changed -> conflict
+    plan = build_sync_plan(
+        {"a.txt": _local("changed-local")}, [], [_stored("a.txt")]
+    )
+    assert plan.conflicts == ["a.txt"], plan.summary()
+
     print("PASS: comparator handles add/change/delete/conflict/unchanged")
 
 

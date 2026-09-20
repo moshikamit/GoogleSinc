@@ -13,6 +13,7 @@ class SyncPlan:
     local_deletions: List[str] = field(default_factory=list)
     remote_deletions: List[str] = field(default_factory=list)
     stale_records: List[str] = field(default_factory=list)
+    execute_deletes: bool = False
 
     def summary(self) -> str:
         return (
@@ -47,20 +48,30 @@ def build_sync_plan(
     local_scan: Dict[str, Dict],
     remote_files: List[Dict],
     stored_state: List[Dict],
+    execute_deletes: bool = False,
 ) -> SyncPlan:
     """Compare local files, Drive files, and stored metadata into a plan.
 
     Decision rules per path:
-    - only local                    -> upload (new file)
+    - only local, never synced      -> upload (new file)
+    - only local, synced before     -> remote deletion or conflict:
+                                       remote vanished but local unchanged
+                                       means it was deleted on Drive;
+                                       if local also changed, it is a conflict
     - only remote, never synced     -> download (new remote file)
-    - only remote, synced before    -> local deletion (reported, not executed)
+    - only remote, synced before    -> local deletion (remote unchanged)
+                                       or conflict (remote also changed)
     - both sides, local changed     -> upload
     - both sides, remote changed    -> download
     - both sides, both changed      -> conflict (reported, not executed)
     - both sides, neither changed   -> unchanged (skipped)
     - only in stored metadata       -> deleted on both sides (clean up record)
+
+    Deletions are collected in the plan but the engine only performs them
+    when execute_deletes is True.
     """
     plan = SyncPlan()
+    plan.execute_deletes = execute_deletes
     remote_by_name = {item["name"]: item for item in remote_files}
     stored_by_path = {row["path"]: row for row in stored_state}
 
@@ -72,7 +83,16 @@ def build_sync_plan(
         stored = stored_by_path.get(path)
 
         if local and not remote:
-            plan.uploads.append(path)
+            if stored is None:
+                plan.uploads.append(path)
+            elif _local_changed(stored, local):
+                # Remote copy vanished AND local changed since last sync:
+                # we cannot know which side should win -> conflict.
+                plan.conflicts.append(path)
+            else:
+                # Remote copy of a previously synced file is gone and the
+                # local file is untouched: it was deleted on Drive.
+                plan.remote_deletions.append(path)
             continue
 
         if remote and not local:
