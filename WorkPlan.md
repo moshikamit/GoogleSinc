@@ -19,27 +19,27 @@ This document tracks the implementation of the Linux Google Drive sync app. Use 
 - [x] Create .gitignore for Python project
 - [x] Install Git on the machine
 - [x] Initialize Git repository locally
-- [ ] Create GitHub repository
-- [ ] Connect local repo to GitHub
-- [ ] Push initial scaffold to GitHub
+- [x] Create GitHub repository
+- [x] Connect local repo to GitHub
+- [x] Push initial scaffold to GitHub
 
 ### 0.2 Environment setup
-- [ ] Check Python version
-- [ ] Create virtual environment
-- [ ] Install required Python packages
-- [ ] Validate basic app startup
-- [ ] Confirm GitHub sync workflow is working
+- [x] Check Python version
+- [x] Create virtual environment
+- [x] Install required Python packages
+- [x] Validate basic app startup
+- [x] Confirm GitHub sync workflow is working
 
 ---
 
 ## Phase 1: Research and design validation
 
 ### 1.1 Confirm architecture choices
-- [ ] Confirm Python + PySide6 approach
-- [ ] Confirm Google Drive API auth strategy
-- [ ] Confirm SQLite storage model
-- [ ] Confirm file watcher approach for Linux
-- [ ] Confirm basic sync policy and conflict strategy
+- [x] Confirm Python + PySide6 approach
+- [x] Confirm Google Drive API auth strategy
+- [x] Confirm SQLite storage model
+- [x] Confirm file watcher approach for Linux
+- [x] Confirm basic sync policy and conflict strategy
 
 ### 1.2 Documentation review
 - [ ] Review Google Drive API quickstart documentation
@@ -53,42 +53,42 @@ This document tracks the implementation of the Linux Google Drive sync app. Use 
 ## Phase 2: Core authentication and API integration
 
 ### 2.1 Google Drive auth
-- [ ] Create Google Cloud project
-- [ ] Enable Google Drive API
-- [ ] Configure OAuth client ID for desktop app
-- [ ] Store client credentials securely
-- [ ] Implement OAuth login flow
-- [ ] Save and refresh access tokens
-- [ ] Test successful authentication
+- [x] Create Google Cloud project
+- [x] Enable Google Drive API
+- [x] Configure OAuth client ID for desktop app
+- [x] Store client credentials securely
+- [x] Implement OAuth login flow
+- [x] Save and refresh access tokens
+- [x] Test successful authentication
 
 ### 2.2 Drive client basics
-- [ ] Create Google Drive service client wrapper
-- [ ] List files in a test folder
-- [ ] Create a test folder in Drive
-- [ ] Upload a sample file
-- [ ] Download a sample file
+- [x] Create Google Drive service client wrapper
+- [x] List files in a test folder
+- [x] Create a test folder in Drive
+- [x] Upload a sample file
+- [x] Download a sample file
 - [ ] Delete a sample file
-- [ ] Confirm API wrapper works reliably
+- [x] Confirm API wrapper works reliably
 
 ---
 
 ## Phase 3: Local sync state and file scanning
 
 ### 3.1 Metadata storage
-- [ ] Design SQLite schema for tracked files
-- [ ] Create database layer
-- [ ] Add file record model
-- [ ] Add sync status fields
-- [ ] Add metadata update logic
+- [x] Design SQLite schema for tracked files
+- [x] Create database layer
+- [x] Add file record model
+- [x] Add sync status fields
+- [x] Add metadata update logic
 - [ ] Add database migration strategy if needed
 
 ### 3.2 Local folder scanning
-- [ ] Create folder scan utility
-- [ ] Recursively enumerate files
-- [ ] Compute relative paths
-- [ ] Save discovered files to metadata
-- [ ] Detect missing or deleted files
-- [ ] Validate path normalization and safety
+- [x] Create folder scan utility
+- [x] Recursively enumerate files
+- [x] Compute relative paths
+- [x] Save discovered files to metadata
+- [x] Detect missing or deleted files
+- [x] Validate path normalization and safety
 
 ---
 
@@ -112,16 +112,16 @@ This document tracks the implementation of the Linux Google Drive sync app. Use 
 ## Phase 5: Sync engine
 
 ### 5.1 Comparison logic
-- [ ] Compare local vs remote file list
-- [ ] Detect added files
-- [ ] Detect removed files
-- [ ] Detect modified files
+- [x] Compare local vs remote file list
+- [x] Detect added files
+- [x] Detect removed files
+- [x] Detect modified files
 - [ ] Detect renamed files
-- [ ] Detect unchanged files
+- [x] Detect unchanged files
 
 ### 5.2 Upload and download actions
-- [ ] Implement upload of new or changed local files
-- [ ] Implement download of new or changed remote files
+- [x] Implement upload of new or changed local files
+- [x] Implement download of new or changed remote files
 - [ ] Implement delete propagation rules
 - [ ] Handle large file transfer reliability
 - [ ] Add retries for transient failures
@@ -184,15 +184,15 @@ This document tracks the implementation of the Linux Google Drive sync app. Use 
 ## Phase 8: Testing and validation
 
 ### 8.1 Unit tests
-- [ ] Test file comparison logic
+- [x] Test file comparison logic
 - [ ] Test conflict handling logic
-- [ ] Test metadata storage logic
+- [x] Test metadata storage logic
 - [ ] Test path normalization
 - [ ] Test sync queue logic
 
 ### 8.2 Integration tests
-- [ ] Test upload path end to end
-- [ ] Test download path end to end
+- [x] Test upload path end to end
+- [x] Test download path end to end
 - [ ] Test delete propagation
 - [ ] Test file change event handling
 - [ ] Test app startup and restoration
