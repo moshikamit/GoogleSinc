@@ -139,20 +139,20 @@ This document tracks the implementation of the Linux Google Drive sync app. Use 
 ## Phase 6: Desktop application foundation
 
 ### 6.1 App shell
-- [ ] Create PySide6 application entry point
-- [ ] Create main window skeleton
-- [ ] Add settings panel
-- [ ] Add status bar or sync status display
-- [ ] Add log area
-- [ ] Add preferences storage
+- [x] Create PySide6 application entry point (system-tray app)
+- [x] Create main window skeleton (Status / Conflicts / Settings tabs)
+- [x] Add settings panel
+- [x] Add status bar or sync status display
+- [x] Add log area
+- [x] Add preferences storage
 
 ### 6.2 UI flow
-- [ ] Add Google login action
-- [ ] Add local folder selection
-- [ ] Add remote folder selection
+- [ ] Add Google login action (reuses existing token.json auth)
+- [x] Add local folder selection
+- [x] Add remote folder selection
 - [ ] Add sync mode selection
-- [ ] Add start/stop sync controls
-- [ ] Add manual sync trigger
+- [x] Add start/stop sync controls (pause/resume)
+- [x] Add manual sync trigger
 - [ ] Add logout action
 
 ---

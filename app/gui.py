@@ -12,8 +12,8 @@ import sys
 from datetime import datetime
 from typing import Optional
 
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -48,12 +48,46 @@ logger = logging.getLogger(__name__)
 
 
 def make_icon(color: str) -> QIcon:
-    pixmap = QPixmap(32, 32)
+    """Draw a colored circle with an up/down sync arrow glyph inside it."""
+    size = 32
+    pixmap = QPixmap(size, size)
     pixmap.fill(QColor("transparent"))
+
     painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    # Colored status circle.
     painter.setBrush(QColor(color))
-    painter.setPen(QColor(color))
-    painter.drawEllipse(4, 4, 24, 24)
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(2, 2, size - 4, size - 4)
+
+    # White up/down arrows (the "sync" mark).
+    glyph = QColor("white")
+    painter.setBrush(glyph)
+    painter.setPen(QPen(glyph, 2, Qt.SolidLine, Qt.RoundCap))
+
+    up = QPainterPath()
+    up.moveTo(12, 8)    # arrowhead tip
+    up.lineTo(8, 14)    # left wing
+    up.lineTo(11, 14)   # to shaft
+    up.lineTo(11, 21)   # shaft down
+    up.lineTo(13, 21)   # shaft width
+    up.lineTo(13, 14)   # shaft up
+    up.lineTo(16, 14)   # right wing
+    up.closeSubpath()
+    painter.drawPath(up)
+
+    down = QPainterPath()
+    down.moveTo(20, 24)  # arrowhead tip
+    down.lineTo(16, 18)  # left wing
+    down.lineTo(19, 18)  # to shaft
+    down.lineTo(19, 11)  # shaft up
+    down.lineTo(21, 11)  # shaft width
+    down.lineTo(21, 18)  # shaft down
+    down.lineTo(24, 18)  # right wing
+    down.closeSubpath()
+    painter.drawPath(down)
+
     painter.end()
     return QIcon(pixmap)
 
