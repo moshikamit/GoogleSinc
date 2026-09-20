@@ -95,17 +95,17 @@ This document tracks the implementation of the Linux Google Drive sync app. Use 
 ## Phase 4: File watching and change detection
 
 ### 4.1 Local change detection
-- [ ] Implement file watch using watchdog or inotify-compatible approach
-- [ ] React to create, modify, rename, and delete events
-- [ ] Debounce repeated events
-- [ ] Queue file change actions
-- [ ] Validate that changes are captured reliably
+- [x] Implement file watch using watchdog or inotify-compatible approach
+- [x] React to create, modify, rename, and delete events
+- [x] Debounce repeated events
+- [x] Queue file change actions
+- [x] Validate that changes are captured reliably
 
 ### 4.2 Polling fallback
-- [ ] Add periodic scan fallback for missed events
-- [ ] Compare scan results with metadata
-- [ ] Merge event queue results with scan results
-- [ ] Confirm no missed updates under repeated test conditions
+- [x] Add periodic scan fallback for missed events
+- [x] Compare scan results with metadata
+- [x] Merge event queue results with scan results
+- [x] Confirm no missed updates under repeated test conditions
 
 ---
 
@@ -194,7 +194,7 @@ This document tracks the implementation of the Linux Google Drive sync app. Use 
 - [x] Test upload path end to end
 - [x] Test download path end to end
 - [x] Test delete propagation
-- [ ] Test file change event handling
+- [x] Test file change event handling
 - [ ] Test app startup and restoration
 
 ### 8.3 Real-world validation
