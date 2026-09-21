@@ -33,19 +33,28 @@ class MirrorEngine:
         catalog: Optional[MirrorCatalog] = None,
         max_workers: int = 8,
         progress: Optional[Callable[[str], None]] = None,
+        stop_file: Optional[str] = None,
     ) -> None:
         self.local_root = local_root
         self.catalog = catalog or MirrorCatalog()
         self.max_workers = max_workers
         self._progress = progress or (lambda msg: None)
         self._stop = threading.Event()
+        # Optional path to a STOP flag file (written by the GUI/daemon stop).
+        # Polled on every catalog page so a stop interrupts the listing fast.
+        self._stop_file = stop_file
 
     def stop(self) -> None:
         self._stop.set()
 
     @property
     def stopped(self) -> bool:
-        return self._stop.is_set()
+        if self._stop.is_set():
+            return True
+        if self._stop_file and os.path.exists(self._stop_file):
+            self._stop.set()
+            return True
+        return False
 
     # --- Phase 1: metadata catalog (resumable, completeness-flagged) ---
 

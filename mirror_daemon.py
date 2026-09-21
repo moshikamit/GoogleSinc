@@ -70,7 +70,7 @@ def run_foreground() -> int:
     with open(PID_PATH, "w", encoding="utf-8") as f:
         f.write(str(os.getpid()))
 
-    engine = MirrorEngine(local_root, progress=_progress)
+    engine = MirrorEngine(local_root, progress=_progress, stop_file=STOP_PATH)
     try:
         while not engine.stopped:
             if os.path.exists(STOP_PATH):
