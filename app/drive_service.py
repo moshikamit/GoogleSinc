@@ -1,6 +1,7 @@
 import io
 import os
 import socket
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 import httplib2
@@ -113,18 +114,27 @@ class GoogleDriveService:
         while True:
             if should_stop and should_stop():
                 return items, page_token, False
-            results = service.files().list(
-                q="trashed = false",
-                pageSize=page_size,
-                spaces="drive",
-                fields=fields,
-                pageToken=page_token,
-            ).execute()
+            # Retry a slow/failed page a few times before giving up, so one
+            # network hiccup doesn't kill a multi-minute listing.
+            for attempt in range(4):
+                try:
+                    results = service.files().list(
+                        q="trashed = false",
+                        pageSize=page_size,
+                        spaces="drive",
+                        fields=fields,
+                        pageToken=page_token,
+                    ).execute()
+                    break
+                except (socket.timeout, TimeoutError, ConnectionError):
+                    if attempt == 3:
+                        raise
+                    time.sleep(2 * (attempt + 1))  # 2s, 4s, 6s backoff
             batch = results.get("files", [])
             items.extend(batch)
             fetched += 1
             if on_page:
-                on_page(fetched, len(items))
+                on_page(fetched, len(items))  # every page: live progress
             page_token = results.get("nextPageToken")
             if not page_token:
                 break

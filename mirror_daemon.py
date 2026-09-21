@@ -77,7 +77,9 @@ def run_foreground() -> int:
                 _progress("Stop flag detected; shutting down.")
                 engine.stop()
                 break
-            counts = engine.download_pending()
+            # run() catalogs and downloads concurrently; the catalog total
+            # grows as new files are discovered.
+            counts = engine.run()
             _progress(f"Pass complete: {counts}")
             if counts.get("pending", 0) == 0 and counts.get("failed", 0) == 0:
                 _progress("All files mirrored. Idling; will re-check periodically.")

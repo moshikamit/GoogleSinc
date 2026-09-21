@@ -218,25 +218,45 @@ class MainWindow(QMainWindow):
         running = self.app.mirror_running()
         complete = catalog.is_catalog_complete()
 
-        state = "RUNNING" if running else "stopped"
-        if not complete:
-            state += " — building metadata catalog"
-        self.mirror_state.setText(f"Daemon: {state}")
-
         done = counts.get("done", 0)
         total = catalog.catalog_size()
         pending = counts.get("pending", 0)
         failed = counts.get("failed", 0)
-        if total:
-            pct = int(100.0 * done / total)
+
+        if running and not complete:
+            # Concurrent phase: catalog still growing (total = "known so far")
+            # while downloads proceed. Show the moving target honestly.
+            self.mirror_state.setText("Daemon: RUNNING — discovering & downloading")
+            self.mirror_progress.setRange(0, 100)
+            pct = int(100.0 * done / total) if total else 0
+            self.mirror_progress.setValue(pct)
+            self.mirror_detail.setText(
+                f"{done:,} of {total:,} files mirrored so far "
+                f"(still discovering more…  {pending:,} queued, {failed:,} failed)"
+            )
+        elif running and complete:
+            self.mirror_state.setText("Daemon: RUNNING — downloading files")
+            self.mirror_progress.setRange(0, 100)
+            pct = int(100.0 * done / total) if total else 0
             self.mirror_progress.setValue(pct)
             self.mirror_detail.setText(
                 f"{done:,} of {total:,} files mirrored "
                 f"({pending:,} pending, {failed:,} failed)"
             )
         else:
-            self.mirror_progress.setValue(0)
-            self.mirror_detail.setText("No files cataloged yet.")
+            self.mirror_state.setText("Daemon: stopped")
+            self.mirror_progress.setRange(0, 100)
+            if total:
+                pct = int(100.0 * done / total)
+                self.mirror_progress.setValue(pct)
+                suffix = "" if complete else "  (catalog incomplete — will resume)"
+                self.mirror_detail.setText(
+                    f"{done:,} of {total:,} files mirrored "
+                    f"({pending:,} pending, {failed:,} failed){suffix}"
+                )
+            else:
+                self.mirror_progress.setValue(0)
+                self.mirror_detail.setText("No files cataloged yet.")
 
         self.mirror_start_btn.setEnabled(not running)
         self.mirror_stop_btn.setEnabled(running)
@@ -496,6 +516,7 @@ class TrayApp(QObject):
             return None
 
     def mirror_running(self) -> bool:
+        """True only if a live daemon process exists (stale PID is cleaned)."""
         pid = self._mirror_pid()
         if pid is None:
             return False
@@ -503,6 +524,12 @@ class TrayApp(QObject):
             os.kill(pid, 0)
             return True
         except OSError:
+            # Stale PID file: the daemon died (or was killed) without cleanup.
+            # Remove it so the Start button re-enables.
+            try:
+                os.remove(self._MIRROR_PID)
+            except OSError:
+                pass
             return False
 
     def start_mirror(self) -> None:
