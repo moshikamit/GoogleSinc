@@ -10,6 +10,7 @@ import fcntl
 import logging
 import os
 import signal
+import subprocess
 import sys
 from datetime import datetime
 from typing import Optional
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QProgressBar,
     QSpinBox,
     QSystemTrayIcon,
     QTabWidget,
@@ -41,6 +43,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.mirror_catalog import MirrorCatalog
 from app.settings import AppSettings, load_settings, save_settings
 from app.sync_engine import SyncEngine
 from app.sync_service import WatchSyncService
@@ -168,9 +171,75 @@ class MainWindow(QMainWindow):
 
         tabs = QTabWidget()
         tabs.addTab(self._status_tab(), "Status")
+        tabs.addTab(self._mirror_tab(), "Mirror")
         tabs.addTab(self._conflicts_tab(), "Conflicts")
         tabs.addTab(self._settings_tab(), "Settings")
         self.setCentralWidget(tabs)
+
+        # Refresh the mirror progress every 10 seconds.
+        self.mirror_timer = QTimer(self)
+        self.mirror_timer.setInterval(10_000)
+        self.mirror_timer.timeout.connect(self.refresh_mirror)
+        self.mirror_timer.start()
+
+    def _mirror_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.addWidget(QLabel("Mirror all of Google Drive to this computer:"))
+
+        self.mirror_state = QLabel("Daemon: not running")
+        layout.addWidget(self.mirror_state)
+
+        self.mirror_progress = QProgressBar()
+        self.mirror_progress.setRange(0, 100)
+        self.mirror_progress.setValue(0)
+        layout.addWidget(self.mirror_progress)
+
+        self.mirror_detail = QLabel("—")
+        layout.addWidget(self.mirror_detail)
+
+        controls = QHBoxLayout()
+        self.mirror_start_btn = QPushButton("Start mirror")
+        self.mirror_start_btn.clicked.connect(self.app.start_mirror)
+        self.mirror_stop_btn = QPushButton("Stop mirror")
+        self.mirror_stop_btn.clicked.connect(self.app.stop_mirror)
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self.refresh_mirror)
+        controls.addWidget(self.mirror_start_btn)
+        controls.addWidget(self.mirror_stop_btn)
+        controls.addWidget(refresh_btn)
+        layout.addLayout(controls)
+        return widget
+
+    def refresh_mirror(self) -> None:
+        """Poll the mirror catalog and update the progress bar."""
+        catalog = MirrorCatalog()
+        counts = catalog.status_counts()
+        running = self.app.mirror_running()
+        complete = catalog.is_catalog_complete()
+
+        state = "RUNNING" if running else "stopped"
+        if not complete:
+            state += " — building metadata catalog"
+        self.mirror_state.setText(f"Daemon: {state}")
+
+        done = counts.get("done", 0)
+        total = catalog.catalog_size()
+        pending = counts.get("pending", 0)
+        failed = counts.get("failed", 0)
+        if total:
+            pct = int(100.0 * done / total)
+            self.mirror_progress.setValue(pct)
+            self.mirror_detail.setText(
+                f"{done:,} of {total:,} files mirrored "
+                f"({pending:,} pending, {failed:,} failed)"
+            )
+        else:
+            self.mirror_progress.setValue(0)
+            self.mirror_detail.setText("No files cataloged yet.")
+
+        self.mirror_start_btn.setEnabled(not running)
+        self.mirror_stop_btn.setEnabled(running)
 
     def _status_tab(self) -> QWidget:
         widget = QWidget()
@@ -409,9 +478,62 @@ class TrayApp(QObject):
 
     def show_window(self) -> None:
         self.window.refresh_conflicts()
+        self.window.refresh_mirror()
         self.window.show()
         self.window.raise_()
         self.window.activateWindow()
+
+    # --- Mirror daemon control (MMI) ----------------------------------
+
+    _MIRROR_PID = os.path.expanduser("~/.config/googlesinc/mirror.pid")
+    _MIRROR_STOP = os.path.expanduser("~/.config/googlesinc/mirror.stop")
+
+    def _mirror_pid(self) -> Optional[int]:
+        try:
+            with open(self._MIRROR_PID, encoding="utf-8") as f:
+                return int(f.read().strip())
+        except (OSError, ValueError):
+            return None
+
+    def mirror_running(self) -> bool:
+        pid = self._mirror_pid()
+        if pid is None:
+            return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    def start_mirror(self) -> None:
+        """Launch the mirror daemon in the background (detached)."""
+        if self.mirror_running():
+            return
+        os.makedirs(os.path.dirname(self._MIRROR_PID), exist_ok=True)
+        if os.path.exists(self._MIRROR_STOP):
+            os.remove(self._MIRROR_STOP)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        log = open(os.path.expanduser("~/.config/googlesinc/mirror.log"), "a")
+        subprocess.Popen(
+            [sys.executable, os.path.join(project_root, "mirror_daemon.py"), "run"],
+            cwd=project_root,
+            stdout=log,
+            stderr=log,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,  # detach from our process group
+        )
+        logger.info("mirror daemon started")
+        self.window.refresh_mirror()
+
+    def stop_mirror(self) -> None:
+        """Ask the mirror daemon to stop (writes the STOP flag it polls)."""
+        if not self.mirror_running():
+            return
+        os.makedirs(os.path.dirname(self._MIRROR_STOP), exist_ok=True)
+        with open(self._MIRROR_STOP, "w", encoding="utf-8") as f:
+            f.write("stop\n")
+        logger.info("mirror daemon stop requested")
+        self.window.refresh_mirror()
 
     def quit(self) -> None:
         if self.service is not None:

@@ -1,14 +1,23 @@
 import io
 import os
-from typing import Any, Dict, List, Optional
+import socket
+from typing import Any, Callable, Dict, List, Optional
 
+import httplib2
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload, MediaIoBaseUpload
+from google_auth_httplib2 import AuthorizedHttp
 
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+SCOPES = ["https://www.googleapis.com/auth/drive"]
+
+# Generous timeout for large listings/downloads over a real connection.
+HTTP_TIMEOUT_SECONDS = 120
+
+FOLDER_MIME = "application/vnd.google-apps.folder"
+FILE_FIELDS = "id, name, mimeType, parents, size, modifiedTime, md5Checksum, trashed"
 
 
 class GoogleDriveService:
@@ -54,7 +63,11 @@ class GoogleDriveService:
         return creds
 
     def get_service(self):
-        return build("drive", "v3", credentials=self.get_credentials())
+        # Use an explicit HTTP timeout so large listings/downloads don't die
+        # on the library's short default read timeout. AuthorizedHttp applies
+        # the OAuth credentials on top of our timeout-configured transport.
+        http = AuthorizedHttp(self.get_credentials(), http=httplib2.Http(timeout=HTTP_TIMEOUT_SECONDS))
+        return build("drive", "v3", http=http)
 
     def list_files(self, page_size: int = 10) -> List[Dict[str, Any]]:
         service = self.get_service()
@@ -67,7 +80,7 @@ class GoogleDriveService:
     def list_files_in_folder(
         self,
         folder_id: str,
-        page_size: int = 100,
+        page_size: int = 1000,
     ) -> List[Dict[str, Any]]:
         service = self.get_service()
         query = f"'{folder_id}' in parents and trashed = false"
@@ -75,9 +88,51 @@ class GoogleDriveService:
             q=query,
             pageSize=page_size,
             spaces="drive",
-            fields="files(id, name, mimeType, parents, size, modifiedTime, md5Checksum)",
+            fields=f"files({FILE_FIELDS})",
         ).execute()
         return results.get("files", [])
+
+    def list_all_my_drive(
+        self,
+        page_size: int = 1000,
+        should_stop: Optional[Callable[[], bool]] = None,
+        on_page: Optional[Callable[[int, int], None]] = None,
+        start_page_token: Optional[str] = None,
+    ) -> tuple:
+        """List non-trashed files/folders in My Drive, paged and resumable.
+
+        Returns (items, next_page_token, completed). `completed` is False when
+        a should_stop callback interrupted the listing; next_page_token then
+        lets a later call resume instead of restarting from scratch.
+        """
+        service = self.get_service()
+        items: List[Dict[str, Any]] = []
+        page_token: Optional[str] = start_page_token
+        fields = f"nextPageToken, files({FILE_FIELDS})"
+        fetched = 0
+        while True:
+            if should_stop and should_stop():
+                return items, page_token, False
+            results = service.files().list(
+                q="trashed = false",
+                pageSize=page_size,
+                spaces="drive",
+                fields=fields,
+                pageToken=page_token,
+            ).execute()
+            batch = results.get("files", [])
+            items.extend(batch)
+            fetched += 1
+            if on_page:
+                on_page(fetched, len(items))
+            page_token = results.get("nextPageToken")
+            if not page_token:
+                break
+        return items, None, True
+
+    def get_root_id(self) -> str:
+        service = self.get_service()
+        return service.files().get(fileId="root", fields="id").execute()["id"]
 
     def find_folder_by_name(
         self,
@@ -201,5 +256,14 @@ class GoogleDriveService:
         return self.download_file(match["id"], destination_path)
 
     def delete_file(self, file_id: str) -> None:
+        """Move a Drive file to the trash (recoverable for 30 days).
+
+        This mirrors Google Drive for Desktop: a local delete moves the cloud
+        copy to Drive trash, not a permanent deletion.
+        """
+        service = self.get_service()
+        service.files().update(fileId=file_id, body={"trashed": True}).execute()
+
+    def delete_file_permanently(self, file_id: str) -> None:
         service = self.get_service()
         service.files().delete(fileId=file_id).execute()
