@@ -40,9 +40,11 @@ class MirrorEngine:
         self.max_workers = max_workers
         self._progress = progress or (lambda msg: None)
         self._stop = threading.Event()
-        # Optional path to a STOP flag file (written by the GUI/daemon stop).
-        # Polled on every catalog page so a stop interrupts the listing fast.
         self._stop_file = stop_file
+        # One set of credentials shared across all worker threads.
+        # Each thread gets its own service (thread-safe) but reuses the same auth.
+        self._creds = GoogleDriveService().get_credentials()
+        self._thread_local = threading.local()
 
     def stop(self) -> None:
         self._stop.set()
@@ -145,19 +147,31 @@ class MirrorEngine:
         svc = GoogleDriveService()
         service = svc.get_service()
         root_id = svc.get_root_id()
-        by_id: Dict[str, Dict] = {}
-        page_token: Optional[str] = None
+        # Seed from the existing catalog so resumed listings can resolve paths
+        # of new items whose parent folders were cataloged in a previous run.
+        by_id: Dict[str, Dict] = self.catalog.folder_map()
+        # Resume from the last saved page token so a restart doesn't start over.
+        page_token: Optional[str] = self.catalog.get_meta("list_page_token") or None
         pages = 0
-        cataloged = 0
+        cataloged = self.catalog.catalog_size()  # count existing items too
 
         def full_path(item) -> str:
+            """Resolve the full path, falling back to the catalog DB for parents
+            not in the in-memory map (e.g. cataloged in a previous run)."""
             parts = [item["name"]]
             seen = {item["id"]}
             parent = (item.get("parents") or [None])[0]
-            while parent and parent != root_id and parent in by_id and parent not in seen:
+            while parent and parent != root_id and parent not in seen:
                 seen.add(parent)
-                parts.append(by_id[parent]["name"])
-                parent = (by_id[parent].get("parents") or [None])[0]
+                if parent in by_id:
+                    parts.append(by_id[parent]["name"])
+                    parent = (by_id[parent].get("parents") or [None])[0]
+                else:
+                    # Look up the parent's full path from the catalog DB.
+                    parent_path = self.catalog.get_path_by_remote_id(parent)
+                    if parent_path:
+                        parts.append(parent_path)
+                    break
             return "/".join(reversed(parts))
 
         fields = f"nextPageToken, files({FILE_FIELDS})"
@@ -193,14 +207,19 @@ class MirrorEngine:
                 )
                 cataloged += 1
             pages += 1
+            cataloged += len(results.get("files", []))
             self.catalog.set_meta("list_progress", str(cataloged))
+            # Persist the page token after every page so we can resume later.
+            next_token = results.get("nextPageToken")
+            self.catalog.set_meta("list_page_token", next_token or "")
             yield pages, cataloged
-            page_token = results.get("nextPageToken")
+            page_token = next_token
             if not page_token:
                 break
 
         if not self.stopped:
-            self.catalog.mark_catalog_complete(cataloged)
+            self.catalog.set_meta("list_page_token", "")  # clear resume point
+            self.catalog.mark_catalog_complete(self.catalog.catalog_size())
 
     def run(self) -> Dict[str, int]:
         """Catalog and download CONCURRENTLY.
@@ -231,23 +250,39 @@ class MirrorEngine:
                         in_flight.append(pool.submit(self._download_one, item))
 
             # Catalog (streams + queues files) while downloads proceed.
-            if not self.catalog.is_catalog_complete():
+            catalog_done = self.catalog.is_catalog_complete()
+            if not catalog_done:
                 for _pages, _total in self._stream_catalog_pages():
                     drain()
                     if self.stopped:
                         break
                 if self.stopped:
                     self.catalog.mark_catalog_incomplete()
+                else:
+                    catalog_done = True  # generator completed without stopping
 
-            # Finish draining the queue after the catalog is complete.
+            # Finish draining until catalog is complete AND queue is empty.
+            # A momentarily-empty in_flight while the catalog is still
+            # streaming must NOT end the run (that was the premature-exit bug).
             while not self.stopped:
                 drain()
                 counts = self.catalog.status_counts()
-                if counts.get("pending", 0) == 0 and counts.get("downloading", 0) == 0:
+                queue_empty = (
+                    counts.get("pending", 0) == 0 and counts.get("downloading", 0) == 0
+                )
+                if catalog_done and queue_empty:
                     break
-                if not in_flight:
-                    break
-                in_flight[0].result(timeout=5)
+                if queue_empty and not catalog_done:
+                    # Catalog still streaming; wait for more items to appear.
+                    time.sleep(0.2)
+                    continue
+                if in_flight:
+                    try:
+                        in_flight[0].result(timeout=5)
+                    except Exception:
+                        pass
+                else:
+                    time.sleep(0.2)
 
         return self.catalog.status_counts()
 
@@ -308,6 +343,17 @@ class MirrorEngine:
             self._progress("Stop requested; finishing in-flight downloads...")
         return self.catalog.status_counts()
 
+    def _get_service(self):
+        """Get (or create) a thread-local Drive service reusing shared credentials."""
+        if not hasattr(self._thread_local, "service"):
+            import httplib2
+            from google_auth_httplib2 import AuthorizedHttp
+            from googleapiclient.discovery import build
+
+            http = AuthorizedHttp(self._creds, http=httplib2.Http(timeout=120))
+            self._thread_local.service = build("drive", "v3", http=http)
+        return self._thread_local.service
+
     def _download_one(self, item: Dict) -> None:
         path = item["path"]
         try:
@@ -321,8 +367,15 @@ class MirrorEngine:
                 self.catalog.mark_done(path)
                 return
 
-            svc = GoogleDriveService()  # per-thread service (thread-safe)
-            svc.download_file(item["remote_id"], local_path)
+            service = self._get_service()
+            request = service.files().get_media(fileId=item["remote_id"])
+            with open(local_path, "wb") as fh:
+                from googleapiclient.http import MediaIoBaseDownload
+                downloader = MediaIoBaseDownload(fh, request)
+                done = False
+                while not done:
+                    _, done = downloader.next_chunk()
+
             self.catalog.mark_done(path)
             logger.info("downloaded: %s", path)
         except Exception as exc:  # noqa: BLE001 - record and continue

@@ -120,6 +120,42 @@ class MirrorCatalog:
             row = conn.execute("SELECT COUNT(*) FROM catalog").fetchone()
         return int(row[0])
 
+    def folder_map(self) -> Dict[str, Dict]:
+        """Rebuild the {remote_id: {id, name, parents}} map for all cataloged
+        folders, so path resolution works after a resume without re-listing."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT path, remote_id FROM catalog WHERE is_folder = 1"
+            ).fetchall()
+        path_to_id = {r[0]: r[1] for r in rows}
+        result: Dict[str, Dict] = {}
+        for path, remote_id in rows:
+            name = path.rsplit("/", 1)[-1]
+            parent_path = path.rsplit("/", 1)[0] if "/" in path else ""
+            parent_id = path_to_id.get(parent_path) if parent_path else None
+            result[remote_id] = {
+                "id": remote_id,
+                "name": name,
+                "parents": [parent_id] if parent_id else [],
+            }
+        return result
+
+    def get_path_by_remote_id(self, remote_id: str) -> Optional[str]:
+        """Look up a cataloged item's full path by its Drive file/folder ID."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT path FROM catalog WHERE remote_id = ?", (remote_id,)
+            ).fetchone()
+        return row[0] if row else None
+
+    def get_path_by_remote_id(self, remote_id: str) -> Optional[str]:
+        """Return the cataloged path for a Drive file/folder id, or None."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT path FROM catalog WHERE remote_id = ?", (remote_id,)
+            ).fetchone()
+        return row[0] if row else None
+
     # --- download queue -------------------------------------------------
 
     def claim_batch(self, limit: int) -> List[Dict]:

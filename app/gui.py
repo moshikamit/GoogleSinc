@@ -198,6 +198,9 @@ class MainWindow(QMainWindow):
         self.mirror_detail = QLabel("—")
         layout.addWidget(self.mirror_detail)
 
+        self.catalog_line = QLabel("—")
+        layout.addWidget(self.catalog_line)
+
         controls = QHBoxLayout()
         self.mirror_start_btn = QPushButton("Start mirror")
         self.mirror_start_btn.clicked.connect(self.app.start_mirror)
@@ -222,41 +225,27 @@ class MainWindow(QMainWindow):
         total = catalog.catalog_size()
         pending = counts.get("pending", 0)
         failed = counts.get("failed", 0)
+        discovered = int(catalog.get_meta("list_progress") or 0)
 
-        if running and not complete:
-            # Concurrent phase: catalog still growing (total = "known so far")
-            # while downloads proceed. Show the moving target honestly.
-            self.mirror_state.setText("Daemon: RUNNING — discovering & downloading")
-            self.mirror_progress.setRange(0, 100)
-            pct = int(100.0 * done / total) if total else 0
-            self.mirror_progress.setValue(pct)
-            self.mirror_detail.setText(
-                f"{done:,} of {total:,} files mirrored so far "
-                f"(still discovering more…  {pending:,} queued, {failed:,} failed)"
-            )
-        elif running and complete:
-            self.mirror_state.setText("Daemon: RUNNING — downloading files")
-            self.mirror_progress.setRange(0, 100)
-            pct = int(100.0 * done / total) if total else 0
-            self.mirror_progress.setValue(pct)
-            self.mirror_detail.setText(
-                f"{done:,} of {total:,} files mirrored "
-                f"({pending:,} pending, {failed:,} failed)"
-            )
+        # Catalog line: discovery count only, never copy counts.
+        if complete:
+            self.catalog_line.setText(f"{total:,} files were discovered.")
+        else:
+            self.catalog_line.setText(f"Discovering files… {discovered:,} found so far")
+
+        # Progress bar: file copy progress only.
+        self.mirror_progress.setRange(0, 100)
+        pct = int(100.0 * done / total) if total else 0
+        self.mirror_progress.setValue(pct)
+        self.mirror_detail.setText(
+            f"{done:,} of {total:,} files mirrored "
+            f"({pending:,} pending, {failed:,} failed)"
+        )
+
+        if running:
+            self.mirror_state.setText("Daemon: RUNNING")
         else:
             self.mirror_state.setText("Daemon: stopped")
-            self.mirror_progress.setRange(0, 100)
-            if total:
-                pct = int(100.0 * done / total)
-                self.mirror_progress.setValue(pct)
-                suffix = "" if complete else "  (catalog incomplete — will resume)"
-                self.mirror_detail.setText(
-                    f"{done:,} of {total:,} files mirrored "
-                    f"({pending:,} pending, {failed:,} failed){suffix}"
-                )
-            else:
-                self.mirror_progress.setValue(0)
-                self.mirror_detail.setText("No files cataloged yet.")
 
         self.mirror_start_btn.setEnabled(not running)
         self.mirror_stop_btn.setEnabled(running)
