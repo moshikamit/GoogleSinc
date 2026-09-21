@@ -144,9 +144,8 @@ class MirrorEngine:
         catalog page-by-page, so downloads can start on the first page while
         the rest of the Drive is still being listed.
         """
-        svc = GoogleDriveService()
-        service = svc.get_service()
-        root_id = svc.get_root_id()
+        service = self._get_service()
+        root_id = self._get_root_id(service)
         # Seed from the existing catalog so resumed listings can resolve paths
         # of new items whose parent folders were cataloged in a previous run.
         by_id: Dict[str, Dict] = self.catalog.folder_map()
@@ -353,6 +352,9 @@ class MirrorEngine:
             http = AuthorizedHttp(self._creds, http=httplib2.Http(timeout=120))
             self._thread_local.service = build("drive", "v3", http=http)
         return self._thread_local.service
+
+    def _get_root_id(self, service) -> str:
+        return service.files().get(fileId="root", fields="id").execute()["id"]
 
     def _download_one(self, item: Dict) -> None:
         path = item["path"]
